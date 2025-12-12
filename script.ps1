@@ -28,7 +28,6 @@ function Download-File {
 
   Write-Log "Downloading: $Url"
   try {
-    # Use curl.exe for better handling of redirects and long query URLs
     & "$env:SystemRoot\System32\curl.exe" -L --fail --retry 3 --retry-delay 2 -o "$OutFile" "$Url"
   } catch {
     Write-Log "curl.exe failed. Falling back to Invoke-WebRequest..."
@@ -60,7 +59,6 @@ function Run-Exe {
   return $p.ExitCode
 }
 
-
 function Run-MsiPerUser {
   param(
     [Parameter(Mandatory)][string]$MsiPath,
@@ -68,15 +66,13 @@ function Run-MsiPerUser {
   )
 
   $log = Join-Path $LogDir ($Name.Replace(" ","_") + ".msi.log")
-  # Per-user MSI attempt:
-  # - ALLUSERS=2 + MSIINSTALLPERUSER=1 requests per-user context where supported
   $args = "/i `"$MsiPath`" /qn /norestart ALLUSERS=2 MSIINSTALLPERUSER=1 /l*v `"$log`""
 
-  Write-Log "Running MSI (per-user attempt): $Name"
+  Write-Log "Running MSI (per-user attempt): ${Name}"
   Write-Log "Log: $log"
 
   $p = Start-Process -FilePath "msiexec.exe" -ArgumentList $args -Wait -PassThru -NoNewWindow
-  Write-Log "$Name MSI exit code: $($p.ExitCode)"
+  Write-Log "${Name} MSI exit code: $($p.ExitCode)"
   return $p.ExitCode
 }
 
@@ -88,16 +84,14 @@ $IpevoUrl = "https://ipevo-software.s3.us-east-1.amazonaws.com/Visualizer/Window
 $DisplayNoteUrl = "https://releases-static.displaynote.com/0e12d653%2Fd0a1%2F4987%2Fa369%2Fdfb8f5b7ea86%2FDisplaynoteMontageClient-2.48.1.49949.exe?response-content-disposition=attachment%3B%20filename%3Ddisplaynote-windows-2.48.1.49949-released.exe%3B%20size%3D171848312"
 
 # File paths
-$ZoomExe      = Join-Path $BaseDir "ZoomInstallerFull.exe"
-$IpevoMsi     = Join-Path $BaseDir "VisualizerDesktop_4.2.17.0.msi"
+$ZoomExe        = Join-Path $BaseDir "ZoomInstallerFull.exe"
+$IpevoMsi       = Join-Path $BaseDir "VisualizerDesktop_4.2.17.0.msi"
 $DisplayNoteExe = Join-Path $BaseDir "DisplaynoteMontageClient.exe"
 
 Write-Log "=== Starting installs as user: $env:USERNAME (elevated: $([bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) ==="
 
 # -----------------------------
-# 1) Zoom (prefer per-user by NOT elevating)
-# Common silent args for Zoom:
-# /quiet /norestart is commonly accepted.
+# 1) Zoom
 # -----------------------------
 try {
   Download-File -Url $ZoomUrl -OutFile $ZoomExe
@@ -124,11 +118,6 @@ try {
 
 # -----------------------------
 # 3) DisplayNote Montage (try common silent switches)
-# Many installers use one of these:
-# - /S
-# - /silent
-# - /verysilent /suppressmsgboxes /norestart /sp-
-# We'll try a couple, stopping if one succeeds.
 # -----------------------------
 try {
   Download-File -Url $DisplayNoteUrl -OutFile $DisplayNoteExe
@@ -154,4 +143,3 @@ try {
 }
 
 Write-Log "=== Finished. Logs are in: $LogDir ==="
-

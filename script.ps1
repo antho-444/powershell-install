@@ -48,16 +48,19 @@ function Run-Exe {
     [string]$Name = "EXE"
   )
 
-  $log = Join-Path $LogDir ($Name.Replace(" ","_") + ".log")
   Write-Log "Running ${Name}: $Path $Args"
-  Write-Log "Log: $log"
 
-  $p = Start-Process -FilePath $Path -ArgumentList $Args -Wait -PassThru -NoNewWindow `
-    -RedirectStandardOutput $log -RedirectStandardError $log
+  $p = Start-Process `
+    -FilePath $Path `
+    -ArgumentList $Args `
+    -Wait `
+    -PassThru `
+    -NoNewWindow
 
   Write-Log "${Name} exit code: $($p.ExitCode)"
   return $p.ExitCode
 }
+
 
 function Run-MsiPerUser {
   param(

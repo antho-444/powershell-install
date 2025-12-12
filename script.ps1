@@ -1,6 +1,7 @@
 # ---------------------------------------------------------
 # Per-User Software Installer (No Elevation)
 # Order:
+# 0) .NET 4.5.1 (EXE)
 # 1) Zoom EXE
 # 2) IPEVO Visualizer MSI (per-user attempt)
 # 3) DisplayNote Montage EXE
@@ -50,17 +51,13 @@ function Run-Exe {
 
   Write-Log "Running ${Name}: $Path $Args"
 
-  $p = Start-Process `
-    -FilePath $Path `
-    -ArgumentList $Args `
-    -Wait `
-    -PassThru `
-    -NoNewWindow
+  # NOTE: Do NOT redirect stdout+stderr to the same file (PowerShell blocks it).
+  # For installers, exit code + our install.log is usually enough.
+  $p = Start-Process -FilePath $Path -ArgumentList $Args -Wait -PassThru -NoNewWindow
 
   Write-Log "${Name} exit code: $($p.ExitCode)"
   return $p.ExitCode
 }
-
 
 function Run-MsiPerUser {
   param(
@@ -82,16 +79,34 @@ function Run-MsiPerUser {
 # -----------------------------
 # URLs (in order)
 # -----------------------------
-$ZoomUrl = "https://cdn.zoom.us/prod/6.6.11.23272/x64/ZoomInstallerFull.exe"
-$IpevoUrl = "https://ipevo-software.s3.us-east-1.amazonaws.com/Visualizer/Windows/VisualizerDesktop_4.2.17.0.msi"
+$DotNetUrl      = "https://cdn.raptortech.com/installers/NET_4.5.1.exe?v=639011657133277591"
+$ZoomUrl        = "https://cdn.zoom.us/prod/6.6.11.23272/x64/ZoomInstallerFull.exe"
+$IpevoUrl       = "https://ipevo-software.s3.us-east-1.amazonaws.com/Visualizer/Windows/VisualizerDesktop_4.2.17.0.msi"
 $DisplayNoteUrl = "https://releases-static.displaynote.com/0e12d653%2Fd0a1%2F4987%2Fa369%2Fdfb8f5b7ea86%2FDisplaynoteMontageClient-2.48.1.49949.exe?response-content-disposition=attachment%3B%20filename%3Ddisplaynote-windows-2.48.1.49949-released.exe%3B%20size%3D171848312"
 
 # File paths
+$DotNetExe      = Join-Path $BaseDir "NET_4.5.1.exe"
 $ZoomExe        = Join-Path $BaseDir "ZoomInstallerFull.exe"
 $IpevoMsi       = Join-Path $BaseDir "VisualizerDesktop_4.2.17.0.msi"
 $DisplayNoteExe = Join-Path $BaseDir "DisplaynoteMontageClient.exe"
 
 Write-Log "=== Starting installs as user: $env:USERNAME (elevated: $([bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) ==="
+
+# -----------------------------
+# 0) .NET 4.5.1
+# NOTE: .NET 4.5.1 typically requires admin and may fail without elevation.
+# Common silent args for older .NET installers:
+# /quiet /norestart
+# -----------------------------
+try {
+  Download-File -Url $DotNetUrl -OutFile $DotNetExe
+  $code = Run-Exe -Path $DotNetExe -Args "/quiet /norestart" -Name ".NET_4.5.1"
+  if ($code -ne 0) {
+    Write-Log ".NET 4.5.1 returned non-zero exit code ($code). This installer often requires admin."
+  }
+} catch {
+  Write-Log ".NET 4.5.1 install failed: $($_.Exception.Message)"
+}
 
 # -----------------------------
 # 1) Zoom

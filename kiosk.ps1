@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 # >>> CHANGE THIS if needed <<<
 # Local user example: ".\BathroomKiosk"
 # Domain user example: "SCHOOL\BathroomKiosk"
-$KioskUser = "$env:USERDOMAIN\$env:USERNAME"   # default: current user; replace with explicit kiosk user if different
+$KioskUser = "ILT\wemssub1"   # <<< The domain user the alarm task will run as at logon
 
 $Url = "https://github.com/antho-444/powershell-install/releases/download/1.1/bathroom.exe"
 $InstallDir = Join-Path $env:ProgramData "BathroomKiosk"
@@ -44,23 +44,17 @@ function Run-Native {
 # UAC Elevation
 # ---------------------------
 if (-not (Test-IsAdmin)) {
-    try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
-    if ([string]::IsNullOrEmpty($PSCommandPath)) {
-        # Running via irm|iex — save script to disk then relaunch elevated
-        $TempScript = Join-Path $env:TEMP "kiosk-installer.ps1"
-        $ScriptUrl  = "https://raw.githubusercontent.com/antho-444/powershell-install/refs/heads/main/kiosk.ps1"
-        try {
-            Invoke-WebRequest -Uri $ScriptUrl -OutFile $TempScript -UseBasicParsing -ErrorAction Stop
-        } catch {
-            Write-Host "Failed to download installer: $_" -ForegroundColor Red
-            pause; exit 1
-        }
-        $ScriptFile = $TempScript
-    } else {
-        $ScriptFile = $PSCommandPath
-    }
-    Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ScriptFile`"") -Verb RunAs
-    exit
+    Write-Host ""
+    Write-Host "ERROR: This script must be run as an Administrator." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Please open PowerShell as an admin account (not as the kiosk user) and run:" -ForegroundColor Yellow
+    Write-Host "   irm <your-url> | iex" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "The kiosk user (e.g. ILT\wemssub1) does NOT need to run this." -ForegroundColor Yellow
+    Write-Host "Just make sure the KioskUser variable at the top of the script is set to that account." -ForegroundColor Yellow
+    Write-Host ""
+    pause
+    exit 1
 }
 
 Write-Host "Running as Administrator..." -ForegroundColor Green
@@ -129,63 +123,45 @@ while ($true) {
 Set-Content -Path $AlarmScriptPath -Value $AlarmMonitor -Encoding UTF8
 
 # ---------------------------
-# Create Alarm Task via XML (targets specific domain kiosk user, no password needed)
+# Create Alarm Task using Register-ScheduledTask (more reliable for domain users)
 # ---------------------------
 Write-Host "Creating AC alarm scheduled task for user: $KioskUser"
 
 # Delete old task if it exists
-try { Start-Process "schtasks.exe" -ArgumentList "/Delete","/TN",$AlarmTaskName,"/F" -Wait -WindowStyle Hidden | Out-Null } catch {}
+Unregister-ScheduledTask -TaskName $AlarmTaskName -Confirm:$false -ErrorAction SilentlyContinue
 
-# Build the task XML targeting the specific kiosk user
-# UserId in the trigger ensures it ONLY fires when THIS user logs on, not any user
-$TaskXmlPath = Join-Path $InstallDir "ac-alarm-task.xml"
-$AlarmTR = "powershell.exe"
-$AlarmArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AlarmScriptPath`""
+$AlarmAction = New-ScheduledTaskAction `
+    -Execute "powershell.exe" `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AlarmScriptPath`""
 
-$TaskXml = @"
-<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Description>Beeps when AC power is disconnected. Runs in kiosk user session for audio.</Description>
-  </RegistrationInfo>
-  <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <UserId>$KioskUser</UserId>
-    </LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <UserId>$KioskUser</UserId>
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Enabled>true</Enabled>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>$AlarmTR</Command>
-      <Arguments>$AlarmArgs</Arguments>
-    </Exec>
-  </Actions>
-</Task>
-"@
+$AlarmTrigger = New-ScheduledTaskTrigger -AtLogOn -User $KioskUser
 
-# Write XML as UTF-16 (required by schtasks /XML)
-$TaskXml | Out-File -FilePath $TaskXmlPath -Encoding Unicode
+$AlarmSettings = New-ScheduledTaskSettingsSet `
+    -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries
 
-# Register the task using the XML — no password required for interactive logon tasks
-Run-Native "schtasks.exe" "/Create /F /TN `"$AlarmTaskName`" /XML `"$TaskXmlPath`""
+$AlarmPrincipal = New-ScheduledTaskPrincipal `
+    -UserId $KioskUser `
+    -LogonType Interactive `
+    -RunLevel Limited
 
-Write-Host "AC disconnect alarm installed — will run at logon for: $KioskUser" -ForegroundColor Cyan
+try {
+    Register-ScheduledTask `
+        -TaskName $AlarmTaskName `
+        -Action $AlarmAction `
+        -Trigger $AlarmTrigger `
+        -Settings $AlarmSettings `
+        -Principal $AlarmPrincipal `
+        -Force `
+        -ErrorAction Stop
+    Write-Host "AC disconnect alarm installed — will run at logon for: $KioskUser" -ForegroundColor Cyan
+} catch {
+    Write-Host "WARNING: Could not register task for $KioskUser — $_" -ForegroundColor Yellow
+    Write-Host "This usually means the user has never logged into this machine yet." -ForegroundColor Yellow
+    Write-Host "Re-run this installer after $KioskUser has logged in at least once." -ForegroundColor Yellow
+}
 
 # Start it immediately in the current session (so you don't need to log off/on to test)
 Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AlarmScriptPath`""

@@ -44,16 +44,22 @@ function Run-Native {
 # UAC Elevation
 # ---------------------------
 if (-not (Test-IsAdmin)) {
-    # When run via irm|iex, $PSCommandPath is empty — re-download to temp and relaunch elevated
-    if (-not $PSCommandPath) {
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+    if ([string]::IsNullOrEmpty($PSCommandPath)) {
+        # Running via irm|iex — save script to disk then relaunch elevated
         $TempScript = Join-Path $env:TEMP "kiosk-installer.ps1"
         $ScriptUrl  = "https://raw.githubusercontent.com/antho-444/powershell-install/refs/heads/main/kiosk.ps1"
-        Invoke-WebRequest -Uri $ScriptUrl -OutFile $TempScript -UseBasicParsing
-        $elevateArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$TempScript`"")
+        try {
+            Invoke-WebRequest -Uri $ScriptUrl -OutFile $TempScript -UseBasicParsing -ErrorAction Stop
+        } catch {
+            Write-Host "Failed to download installer: $_" -ForegroundColor Red
+            pause; exit 1
+        }
+        $ScriptFile = $TempScript
     } else {
-        $elevateArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
+        $ScriptFile = $PSCommandPath
     }
-    Start-Process -FilePath "powershell.exe" -ArgumentList $elevateArgs -Verb RunAs
+    Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ScriptFile`"") -Verb RunAs
     exit
 }
 
